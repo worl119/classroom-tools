@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Clock</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --fg:    #f2f2f2;
+    --dim:   #7a7a7a;
+    --faint: #4a4a4a;
+    --bg:    #000;
+    --warn:  #f0a92b;
+    --alert: #ff4033;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Helvetica Neue", Helvetica, Arial, "Segoe UI", system-ui, sans-serif;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35em;
+    cursor: none;
+    user-select: none;
+  }
+  body.show-cursor { cursor: default; }
+
+  /* ---------- 큰 숫자 (시계·타이머 공용) ---------- */
+  .display {
+    font-size: min(17vw, 32vh);
+    line-height: 1;
+    font-weight: 300;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    color: var(--fg);
+    transition: color 0.4s;
+  }
+  .display .sub {
+    font-size: 0.42em;
+    color: var(--dim);
+    letter-spacing: 0;
+  }
+  .display .suffix {
+    font-size: 0.3em;
+    color: var(--dim);
+    letter-spacing: 0.06em;
+    margin-left: 0.15em;
+  }
+
+  #timer.warn  { color: var(--warn); }
+  #timer.over  { color: var(--alert); }
+  #timer.paused { color: var(--dim); }
+
+  /* ---------- 부제 줄 ---------- */
+  .caption {
+    font-size: min(3.4vw, 6vh);
+    font-weight: 300;
+    color: var(--dim);
+    letter-spacing: 0.02em;
+  }
+
+  /* ---------- 프리셋 버튼 ---------- */
+  #presets {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.55rem;
+    margin-top: 0.6rem;
+  }
+  #presets button {
+    font: inherit;
+    font-size: clamp(0.9rem, 1.6vw, 1.25rem);
+    font-weight: 300;
+    color: var(--dim);
+    background: transparent;
+    border: 1px solid #2a2a2a;
+    border-radius: 999px;
+    padding: 0.4em 1.1em;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  #presets button:hover,
+  #presets button:focus-visible {
+    color: var(--fg);
+    border-color: var(--dim);
+    outline: none;
+  }
+
+  /* ---------- 남은 시간 막대 ---------- */
+  #bar {
+    position: fixed;
+    left: 0; bottom: 0;
+    height: 6px;
+    width: 0;
+    background: var(--fg);
+    transition: background 0.4s;
+  }
+  #bar.warn { background: var(--warn); }
+  #bar.over { background: var(--alert); }
+
+  /* ---------- 하단 안내 ---------- */
+  #hint {
+    position: fixed;
+    bottom: 1.4rem;
+    left: 0; right: 0;
+    text-align: center;
+    font-size: 0.82rem;
+    color: var(--faint);
+    letter-spacing: 0.03em;
+    transition: opacity 0.6s;
+  }
+  #hint.fade { opacity: 0; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+  <!-- 시계 -->
+  <div id="clock">
+    <div class="display"><span id="hms">--:--</span><span class="sub" id="sec"></span><span class="suffix" id="ampm"></span></div>
+  </div>
+  <div class="caption" id="date"></div>
+
+  <!-- 타이머 -->
+  <div id="timerWrap" class="hidden">
+    <div class="display" id="timer">0:00</div>
+  </div>
+  <div class="caption hidden" id="timerNote"></div>
+  <div id="presets" class="hidden"></div>
+
+  <div id="bar"></div>
+  <div id="hint"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  var $ = function (id) { return document.getElementById(id); };
+
+  var clockEl  = $('clock'),   hmsEl   = $('hms'),   secEl  = $('sec'),
+      ampmEl   = $('ampm'),    dateEl  = $('date');
+  var timerWrap = $('timerWrap'), timerEl = $('timer'),
+      noteEl   = $('timerNote'), presetsEl = $('presets');
+  var barEl = $('bar'), hintEl = $('hint');
+
+  // ─────────── 설정 저장 ───────────
+  function load(key, dflt) {
+    try {
+      var v = localStorage.getItem('clock.' + key);
+      return v === null ? dflt : v === '1';
+    } catch (e) { return dflt; }
+  }
+  function save(key, val) {
+    try { localStorage.setItem('clock.' + key, val ? '1' : '0'); } catch (e) {}
+  }
+
+  var showSeconds = load('sec',  true);
+  var showDate    = load('date', true);
+  var hour12      = load('h12',  true);
+
+  // ─────────── 상태 ───────────
+  var mode = 'clock';               // 'clock' | 'timer'
+  var durationMs = 5 * 60 * 1000;   // 설정된 길이
+  var remainingMs = durationMs;     // 정지 중 남은 시간
+  var endAt = null;                 // 진행 중 종료 시각 (드리프트 방지)
+  var running = false;
+  var ended = false;                // 이번 회차가 이미 0에 닿았는가
+
+  var PRESETS = [1, 2, 3, 5, 10, 15, 20];
+
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+
+  // ─────────── 시계 ───────────
+  function renderClock() {
+    var now = new Date();
+    var h = now.getHours();
+    var suffix = '';
+
+    if (hour12) {
+      suffix = h < 12 ? 'AM' : 'PM';
+      h = h % 12;
+      if (h === 0) h = 12;
+    }
+
+    hmsEl.textContent  = (hour12 ? h : pad(h)) + ':' + pad(now.getMinutes());
+    secEl.textContent  = showSeconds ? ':' + pad(now.getSeconds()) : '';
+    ampmEl.textContent = suffix;
+
+    if (showDate) {
+      dateEl.textContent = now.toLocaleDateString(undefined, {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      });
+    }
+    dateEl.classList.toggle('hidden', !showDate);
+  }
+
+  // ─────────── 타이머 ───────────
+  function leftMs() {
+    return running ? (endAt - Date.now()) : remainingMs;
+  }
+
+  function formatSpan(ms) {
+    var neg = ms < 0;
+    var t = Math.floor((Math.abs(ms) + 999) / 1000);   // 올림 — 5:00에서 시작해 1초 뒤 4:59
+    if (neg) t = Math.floor(Math.abs(ms) / 1000);      // 초과분은 내림
+    var s = t % 60, m = Math.floor(t / 60) % 60, h = Math.floor(t / 3600);
+    var out = h > 0 ? h + ':' + pad(m) + ':' + pad(s) : m + ':' + pad(s);
+    return (neg ? '−' : '') + out;                // U+2212 빼기 기호
+  }
+
+  // 화면 모드와 무관하게 매초 돈다 — 시계를 보고 있어도 종료를 놓치지 않도록.
+  function stepTimer() {
+    if (!running || ended) return;
+    if (leftMs() <= 0) {
+      ended = true;
+      if (mode !== 'timer') setMode('timer');   // 끝나면 타이머 화면으로 되돌린다
+    }
+  }
+
+  function renderTimer() {
+    var ms = leftMs();
+    timerEl.textContent = formatSpan(ms);
+
+    var over  = ms <= 0;
+    var warn  = !over && ms <= 60000;
+
+    timerEl.classList.toggle('over',  over);
+    timerEl.classList.toggle('warn',  warn);
+    timerEl.classList.toggle('paused', !running && !over);
+    barEl.classList.toggle('over', over);
+    barEl.classList.toggle('warn', warn);
+
+    // 남은 시간 막대
+    var frac = over ? 1 : Math.max(0, Math.min(1, ms / durationMs));
+    barEl.style.width = (frac * 100) + '%';
+
+    // 프리셋은 진행 중에는 감춘다 — 화면에 숫자만 남게
+    presetsEl.classList.toggle('hidden', running);
+
+    if (over) {
+      noteEl.textContent = running ? '시간 초과' : '종료';
+      noteEl.classList.remove('hidden');
+    } else if (running) {
+      noteEl.classList.add('hidden');
+    } else {
+      noteEl.textContent = (ms === durationMs) ? (durationMs / 60000) + '분' : '일시정지';
+      noteEl.classList.remove('hidden');
+    }
+
+    document.title = running || ms !== durationMs
+      ? formatSpan(ms) + ' · Timer'
+      : 'Clock';
+  }
+
+  function startTimer() {
+    if (running) return;
+    if (remainingMs <= 0) remainingMs = durationMs;   // 종료 상태에서 누르면 재시작
+    endAt = Date.now() + remainingMs;
+    running = true;
+    ended = false;
+    renderTimer();
+  }
+
+  function pauseTimer() {
+    if (!running) return;
+    remainingMs = endAt - Date.now();
+    running = false;
+    endAt = null;
+    renderTimer();
+  }
+
+  function resetTimer() {
+    running = false;
+    endAt = null;
+    ended = false;
+    remainingMs = durationMs;
+    renderTimer();
+  }
+
+  function setMinutes(min) {
+    durationMs = Math.max(60000, Math.round(min) * 60000);
+    resetTimer();
+  }
+
+  function nudge(deltaMin) {
+    var base = running ? leftMs() : remainingMs;
+    var next = Math.max(60000, base + deltaMin * 60000);
+    if (running) {
+      endAt = Date.now() + next;
+      if (next > durationMs) durationMs = next;
+    } else {
+      durationMs = next;
+      remainingMs = next;
+    }
+    ended = false;
+    renderTimer();
+  }
+
+  // ─────────── 모드 전환 ───────────
+  function setMode(next) {
+    mode = next;
+    var isTimer = mode === 'timer';
+    clockEl.classList.toggle('hidden', isTimer);
+    dateEl.classList.toggle('hidden', isTimer || !showDate);
+    timerWrap.classList.toggle('hidden', !isTimer);
+    noteEl.classList.toggle('hidden', !isTimer);
+    presetsEl.classList.toggle('hidden', !isTimer || running);
+    if (!isTimer) barEl.style.width = '0';
+    updateHint();
+    tickNow();
+  }
+
+  function updateHint() {
+    hintEl.innerHTML = mode === 'timer'
+      ? 'Space 시작/멈춤 &nbsp;·&nbsp; R 초기화 &nbsp;·&nbsp; ↑↓ ±1분 &nbsp;·&nbsp; T 시계로 &nbsp;·&nbsp; F 전체화면'
+      : 'T 타이머 &nbsp;·&nbsp; S 초 &nbsp;·&nbsp; D 날짜 &nbsp;·&nbsp; H 12/24시 &nbsp;·&nbsp; F 전체화면';
+  }
+
+  // ─────────── 프리셋 버튼 ───────────
+  PRESETS.forEach(function (m) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = m + '분';
+    b.addEventListener('click', function () { setMinutes(m); startTimer(); });
+    presetsEl.appendChild(b);
+  });
+
+  // ─────────── 갱신 루프 ───────────
+  function tickNow() {
+    stepTimer();
+    if (mode === 'clock') { renderClock(); document.title = 'Clock'; }
+    else renderTimer();
+  }
+
+  function loop() {
+    tickNow();
+    setTimeout(loop, 1000 - (Date.now() % 1000) + 8);   // 초 경계에 맞춤
+  }
+  loop();
+
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) tickNow();
+  });
+
+  // ─────────── 키보드 ───────────
+  document.addEventListener('keydown', function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var k = e.key.toLowerCase();
+
+    if (k === 't') {
+      setMode(mode === 'timer' ? 'clock' : 'timer');
+    } else if (k === 'f') {
+      toggleFullscreen();
+    } else if (mode === 'timer') {
+      if (e.key === ' ') { e.preventDefault(); running ? pauseTimer() : startTimer(); }
+      else if (k === 'r') { resetTimer(); }
+      else if (e.key === 'ArrowUp')   { e.preventDefault(); nudge(e.shiftKey ?  5 :  1); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); nudge(e.shiftKey ? -5 : -1); }
+      else if (k === 'escape') { setMode('clock'); }
+    } else {
+      if (k === 's') { showSeconds = !showSeconds; save('sec',  showSeconds); renderClock(); }
+      else if (k === 'd') { showDate = !showDate;  save('date', showDate);    renderClock(); }
+      else if (k === 'h') { hour12   = !hour12;    save('h12',  hour12);      renderClock(); }
+    }
+  });
+
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      var el = document.documentElement;
+      (el.requestFullscreen || el.webkitRequestFullscreen || function () {}).call(el);
+    } else {
+      document.exitFullscreen();
+    }
+  }
+  document.addEventListener('dblclick', toggleFullscreen);
+
+  // ─────────── 화면 꺼짐 방지 (https 한정) ───────────
+  var lock = null;
+  function requestWakeLock() {
+    try {
+      if ('wakeLock' in navigator) {
+        navigator.wakeLock.request('screen').then(function (l) {
+          lock = l;
+          l.addEventListener('release', function () { lock = null; });
+        }, function () {});
+      }
+    } catch (e) {}
+  }
+  document.addEventListener('click',   requestWakeLock, { once: true });
+  document.addEventListener('keydown', requestWakeLock, { once: true });
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && lock === null) requestWakeLock();
+  });
+
+  // ─────────── 마우스가 멈추면 커서·안내를 감춘다 ───────────
+  var idleTimer;
+  function wake() {
+    document.body.classList.add('show-cursor');
+    hintEl.classList.remove('fade');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(function () {
+      document.body.classList.remove('show-cursor');
+      hintEl.classList.add('fade');
+    }, 4000);
+  }
+  document.addEventListener('mousemove', wake);
+  document.addEventListener('keydown',  wake);
+
+  updateHint();
+  wake();
+})();
+</script>
+</body>
+</html>

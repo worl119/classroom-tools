@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Classroom Tools</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --fg:    #f2f2f2;
+    --dim:   #8a8a8a;
+    --faint: #4a4a4a;
+    --line:  #242424;
+    --bg:    #000;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Helvetica Neue", Helvetica, Arial, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem 1.5rem;
+  }
+
+  main { width: 100%; max-width: 34rem; }
+
+  h1 {
+    font-size: clamp(1.6rem, 4vw, 2.2rem);
+    font-weight: 300;
+    letter-spacing: -0.01em;
+  }
+  .lede {
+    margin-top: 0.5rem;
+    font-size: 0.95rem;
+    font-weight: 300;
+    color: var(--dim);
+    line-height: 1.6;
+  }
+
+  ul { list-style: none; margin-top: 2.5rem; }
+  li + li { border-top: 1px solid var(--line); }
+
+  a.tool {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 1.15rem 0.25rem;
+    color: inherit;
+    text-decoration: none;
+    border-radius: 4px;
+    transition: background 0.15s;
+  }
+  a.tool:hover,
+  a.tool:focus-visible {
+    background: #0e0e0e;
+    outline: none;
+  }
+  a.tool:focus-visible { box-shadow: 0 0 0 2px var(--dim); }
+
+  .name {
+    font-size: 1.15rem;
+    font-weight: 400;
+    white-space: nowrap;
+  }
+  .what {
+    font-size: 0.9rem;
+    font-weight: 300;
+    color: var(--dim);
+    line-height: 1.5;
+  }
+  .arrow { margin-left: auto; color: var(--faint); }
+
+  footer {
+    margin-top: 3rem;
+    font-size: 0.8rem;
+    color: var(--faint);
+    line-height: 1.6;
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Classroom Tools</h1>
+  <p class="lede">수업 중 프로젝터에 띄워 쓰는 도구들. 전부 정적 페이지라 로그인도 설치도 없습니다.</p>
+
+  <ul>
+    <li>
+      <a class="tool" href="clock/">
+        <span class="name">Clock</span>
+        <span class="what">검은 화면에 시각만. <code>T</code>를 누르면 카운트다운 타이머로 바뀝니다.</span>
+        <span class="arrow">→</span>
+      </a>
+    </li>
+  </ul>
+
+  <footer>Howard Han · 페이지마다 하단에 조작 키가 표시됩니다.</footer>
+</main>
+</body>
+</html>
