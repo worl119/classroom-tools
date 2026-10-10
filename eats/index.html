@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Oxnard &amp; Ventura Eats</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  :root {
+    color-scheme: dark;
+    --fg:    #f2f2f2;
+    --dim:   #8a8a8a;
+    --faint: #4a4a4a;
+    --line:  #242424;
+    --bg:    #000;
+    --panel: #0b0b0b;
+    --pin:   #f0a92b;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: "Helvetica Neue", Helvetica, Arial, "Segoe UI", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    display: grid;
+    grid-template-columns: 23rem 1fr;
+    grid-template-rows: auto 1fr;
+    grid-template-areas: "head map" "list map";
+    overflow: hidden;
+  }
+
+  /* ---------- 머리말 ---------- */
+  header {
+    grid-area: head;
+    padding: 1.4rem 1.25rem 1rem;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+  }
+  h1 {
+    font-size: 1.6rem;
+    font-weight: 300;
+    letter-spacing: -0.01em;
+  }
+  .lede {
+    margin-top: 0.35rem;
+    font-size: 0.9rem;
+    font-weight: 300;
+    color: var(--dim);
+    line-height: 1.5;
+  }
+  .lede a { color: var(--fg); }
+
+  #notice {
+    margin-top: 0.8rem;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.8rem;
+    line-height: 1.45;
+    color: var(--pin);
+    border: 1px solid #3a2c10;
+    border-radius: 6px;
+  }
+  #notice[hidden] { display: none; }
+
+  /* ---------- 분류 필터 ---------- */
+  #filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 0.9rem;
+  }
+  #filters button {
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 300;
+    color: var(--dim);
+    background: transparent;
+    border: 1px solid #2a2a2a;
+    border-radius: 999px;
+    padding: 0.3rem 0.75rem;
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  #filters button:hover { color: var(--fg); }
+  #filters button[aria-pressed="true"] {
+    color: var(--bg);
+    background: var(--fg);
+    border-color: var(--fg);
+  }
+
+  /* ---------- 목록 ---------- */
+  #list {
+    grid-area: list;
+    list-style: none;
+    overflow-y: auto;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  #list li { border-top: 1px solid var(--line); }
+  #list button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    background: transparent;
+    border: 0;
+    padding: 0.85rem 1.25rem;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  #list button:hover,
+  #list button:focus-visible { background: #141414; outline: none; }
+  #list li.active button { background: #1a1a1a; box-shadow: inset 3px 0 0 var(--pin); }
+  #list li.nopin .place::after {
+    content: "not on map yet";
+    margin-left: 0.5rem;
+    font-size: 0.7rem;
+    color: var(--faint);
+  }
+
+  .place { font-size: 1rem; font-weight: 400; }
+  .cat {
+    margin-top: 0.15rem;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .why {
+    margin-top: 0.35rem;
+    font-size: 0.88rem;
+    font-weight: 300;
+    line-height: 1.45;
+    color: #c8c8c8;
+  }
+  .who { margin-top: 0.3rem; font-size: 0.78rem; color: var(--dim); }
+
+  #empty {
+    padding: 1.5rem 1.25rem;
+    font-size: 0.9rem;
+    font-weight: 300;
+    color: var(--dim);
+    line-height: 1.5;
+  }
+
+  /* ---------- 지도 ---------- */
+  #map { grid-area: map; background: #111; }
+  #map .fallback {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2rem;
+    text-align: center;
+    font-weight: 300;
+    color: var(--dim);
+  }
+
+  .leaflet-container { font: inherit; }
+  .leaflet-popup-content-wrapper,
+  .leaflet-popup-tip {
+    background: #111;
+    color: var(--fg);
+    box-shadow: 0 2px 14px rgba(0, 0, 0, 0.6);
+  }
+  .leaflet-popup-content-wrapper { border-radius: 8px; }
+  .leaflet-popup-content { margin: 0.8rem 1rem; min-width: 11rem; }
+  .leaflet-popup-content a {
+    display: inline-block;
+    margin-top: 0.55rem;
+    font-size: 0.82rem;
+    color: var(--pin);
+  }
+  .leaflet-container a.leaflet-popup-close-button { color: var(--dim); }
+
+  /* ---------- 좁은 화면: 지도 위, 목록 아래 ---------- */
+  @media (max-width: 760px) {
+    body {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto 46vh 1fr;
+      grid-template-areas: "head" "map" "list";
+    }
+    header, #list { border-right: 0; }
+    header { padding: 1rem 1rem 0.8rem; }
+    h1 { font-size: 1.35rem; }
+    #list button { padding: 0.8rem 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Oxnard &amp; Ventura Eats</h1>
+  <p class="lede">Places to eat around Oxnard and Ventura, recommended by students.
+    <a id="add" href="#" hidden>Add a place →</a></p>
+  <p id="notice" hidden></p>
+  <div id="filters"></div>
+</header>
+
+<ul id="list"></ul>
+<div id="map"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+(() => {
+  'use strict';
+
+  /* ---------- 설정 ----------
+     SHEET_CSV: 구글 시트의 「승인된 행만 모은 탭」을 웹에 게시한 CSV 주소.
+                비어 있으면 아래 SAMPLE을 보여 준다.
+     FORM_URL:  추천을 받는 구글 폼 주소. 비어 있으면 「Add a place」 링크를 숨긴다. */
+  const SHEET_CSV = '';
+  const FORM_URL  = '';
+
+  const CENTER = [34.2350, -119.2300];   // 옥스나드와 벤투라 사이
+
+  // 시트 주소가 정해지기 전 화면 확인용. 실제 가게가 아니다.
+  const SAMPLE = [
+    'name,category,comment,nickname,maps_url,coords',
+    'Sample Taqueria,Mexican,"Al pastor tacos, cash only.",chem_fan,,"34.2010, -119.1790"',
+    'Sample Pho House,Vietnamese,Big bowls and fast service between classes.,,,"34.2188, -119.1772"',
+    'Sample Harbor Fish,Seafood,"Fish and chips by the water, go before sunset.",mole_day,,"34.1722, -119.2236"',
+    'Sample Boba Stop,Cafe / Dessert,Good place to study.,,,"34.1790, -119.1650"',
+    'Sample Main St Ramen,Japanese,Downtown Ventura. Short walk from the pier.,,,"34.2806, -119.2935"',
+    'Sample Burger Shack,American,No coordinates yet so this one is list-only.,anon,,',
+  ].join('\n');
+
+  /* ---------- CSV ---------- */
+
+  // 따옴표 안의 쉼표·줄바꿈을 지키는 최소 CSV 파서
+  function parseCSV(text) {
+    const rows = [];
+    let row = [], cell = '', quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i];
+      if (quoted) {
+        if (c === '"' && text[i + 1] === '"') { cell += '"'; i++; }
+        else if (c === '"') quoted = false;
+        else cell += c;
+      } else if (c === '"') quoted = true;
+      else if (c === ',') { row.push(cell); cell = ''; }
+      else if (c === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+      else if (c !== '\r') cell += c;
+    }
+    if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+    return rows;
+  }
+
+  function toPlaces(text) {
+    const rows = parseCSV(text);
+    if (!rows.length) return [];
+    const head = rows[0].map(h => h.trim().toLowerCase());
+    const col = name => head.indexOf(name);
+    const at = (r, name) => (col(name) >= 0 ? (r[col(name)] || '').trim() : '');
+
+    return rows.slice(1).map(r => {
+      const url = safeMapsUrl(at(r, 'maps_url'));
+      return {
+        name:     at(r, 'name'),
+        category: at(r, 'category'),
+        comment:  at(r, 'comment'),
+        nickname: at(r, 'nickname'),
+        url,
+        latlng: readCoords(at(r, 'coords'))
+             || readCoords(at(r, 'lat') + ',' + at(r, 'lng'))
+             || coordsFromUrl(url),
+      };
+    }).filter(p => p.name);
+  }
+
+  /* ---------- 좌표 ---------- */
+
+  // "34.1975, -119.1771" — 구글 지도에서 우클릭해 복사한 형식 그대로
+  function readCoords(s) {
+    const m = /^\s*(-?\d{1,2}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*$/.exec(s);
+    if (!m) return null;
+    const lat = +m[1], lng = +m[2];
+    return Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? [lat, lng] : null;
+  }
+
+  // 긴 구글 지도 주소에는 좌표가 들어 있다. 단축 링크(maps.app.goo.gl)에는 없다.
+  function coordsFromUrl(url) {
+    if (!url) return null;
+    const pin = /!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/.exec(url);   // 가게 핀
+    if (pin) return readCoords(pin[1] + ',' + pin[2]);
+    const view = /@(-?\d+\.\d+),(-?\d+\.\d+)/.exec(url);      // 화면 중심
+    return view ? readCoords(view[1] + ',' + view[2]) : null;
+  }
+
+  // 학생이 붙여 넣은 값이므로 구글 지도 주소일 때만 링크로 쓴다
+  function safeMapsUrl(s) {
+    try {
+      const u = new URL(s);
+      const ok = u.protocol === 'https:' &&
+        /(^|\.)google\.[a-z.]+$|^maps\.app\.goo\.gl$|^goo\.gl$/.test(u.hostname);
+      return ok ? u.href : '';
+    } catch { return ''; }
+  }
+
+  function mapsLink(p) {
+    return p.url || 'https://www.google.com/maps/search/?api=1&query=' +
+      encodeURIComponent(p.name + ' Ventura County CA');
+  }
+
+  /* ---------- 화면 ---------- */
+
+  const $ = id => document.getElementById(id);
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text) n.textContent = text;
+    return n;
+  };
+
+  let map = null, places = [], filter = '';
+
+  function initMap() {
+    if (!window.L) {
+      $('map').append(el('div', 'fallback', 'The map could not load. The list still works.'));
+      return;
+    }
+    map = L.map('map', { zoomControl: false }).setView(CENTER, 11);
+    L.control.zoom({ position: 'bottomright' }).addTo(map);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
+  }
+
+  function card(p) {
+    const box = el('div');
+    box.append(el('div', 'place', p.name));
+    if (p.category) box.append(el('div', 'cat', p.category));
+    if (p.comment)  box.append(el('div', 'why', p.comment));
+    if (p.nickname) box.append(el('div', 'who', '— ' + p.nickname));
+    return box;
+  }
+
+  function select(p) {
+    for (const q of places) q.item.classList.toggle('active', q === p);
+    if (p.marker) {
+      map.flyTo(p.latlng, Math.max(map.getZoom(), 15), { duration: 0.6 });
+      p.marker.openPopup();
+    } else {
+      window.open(mapsLink(p), '_blank', 'noopener');
+    }
+  }
+
+  function build() {
+    const list = $('list');
+    list.replaceChildren();
+
+    for (const p of places) {
+      p.item = el('li', p.latlng ? '' : 'nopin');
+      const btn = el('button');
+      btn.type = 'button';
+      btn.append(card(p));
+      btn.addEventListener('click', () => select(p));
+      p.item.append(btn);
+      list.append(p.item);
+
+      if (map && p.latlng) {
+        const pop = card(p);
+        const a = el('a', '', 'Open in Google Maps →');
+        a.href = mapsLink(p);
+        a.target = '_blank';
+        a.rel = 'noopener';
+        pop.append(a);
+        p.marker = L.circleMarker(p.latlng, {
+          radius: 9, weight: 2, color: '#000', fillColor: '#f0a92b', fillOpacity: 1,
+        }).bindPopup(pop);
+        p.marker.on('click', () => {
+          for (const q of places) q.item.classList.toggle('active', q === p);
+          p.item.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        });
+      }
+    }
+
+    if (!places.length) {
+      const none = el('li');
+      none.id = 'empty';
+      none.textContent = 'No recommendations yet. Be the first!';
+      list.append(none);
+    }
+
+    buildFilters();
+    applyFilter();
+
+    const pins = places.filter(p => p.marker).map(p => p.latlng);
+    if (map && pins.length) map.fitBounds(pins, { padding: [40, 40], maxZoom: 15 });
+  }
+
+  function buildFilters() {
+    const box = $('filters');
+    box.replaceChildren();
+    const cats = [...new Set(places.map(p => p.category).filter(Boolean))].sort();
+    if (cats.length < 2) return;
+    for (const c of ['', ...cats]) {
+      const b = el('button', '', c || 'All');
+      b.type = 'button';
+      b.setAttribute('aria-pressed', String(c === filter));
+      b.addEventListener('click', () => {
+        filter = c;
+        for (const x of box.children) x.setAttribute('aria-pressed', String(x === b));
+        applyFilter();
+      });
+      box.append(b);
+    }
+  }
+
+  function applyFilter() {
+    for (const p of places) {
+      const show = !filter || p.category === filter;
+      p.item.hidden = !show;
+      if (!p.marker) continue;
+      if (show) p.marker.addTo(map); else p.marker.remove();
+    }
+  }
+
+  function notice(text) {
+    $('notice').textContent = text;
+    $('notice').hidden = false;
+  }
+
+  async function load() {
+    if (!SHEET_CSV) {
+      notice('Sample data. These are not real places.');
+      return SAMPLE;
+    }
+    const res = await fetch(SHEET_CSV, { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status);
+    return res.text();
+  }
+
+  if (FORM_URL) {
+    $('add').href = FORM_URL;
+    $('add').target = '_blank';
+    $('add').rel = 'noopener';
+    $('add').hidden = false;
+  }
+
+  initMap();
+  load()
+    .then(text => { places = toPlaces(text); build(); })
+    .catch(() => { notice('Could not load the list right now. Try again in a minute.'); build(); });
+})();
+</script>
+</body>
+</html>
