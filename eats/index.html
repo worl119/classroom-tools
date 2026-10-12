@@ -95,6 +95,24 @@
     border-color: var(--fg);
   }
 
+  /* ---------- 정렬 ---------- */
+  #sort {
+    display: flex;
+    gap: 0.9rem;
+    margin-top: 0.9rem;
+    font-size: 0.78rem;
+    color: var(--faint);
+  }
+  #sort button {
+    font: inherit;
+    color: var(--dim);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+  }
+  #sort button:hover { color: var(--fg); }
+  #sort button[aria-pressed="true"] { color: var(--fg); text-decoration: underline; text-underline-offset: 0.25em; }
+
   /* ---------- 목록 ---------- */
   #list {
     grid-area: list;
@@ -143,6 +161,21 @@
     color: #c8c8c8;
   }
   .who { margin-top: 0.3rem; font-size: 0.78rem; color: var(--dim); }
+  .count { margin-top: 0.3rem; font-size: 0.78rem; color: var(--pin); }
+  .rec + .rec { margin-top: 0.55rem; padding-top: 0.2rem; border-top: 1px solid var(--line); }
+
+  /* ---------- 핀 (추천이 여럿이면 숫자를 품는다) ---------- */
+  .pin {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--pin);
+    border: 2px solid #000;
+    color: #000;
+    font-size: 0.8rem;
+    font-weight: 700;
+  }
 
   #empty {
     padding: 1.5rem 1.25rem;
@@ -173,7 +206,7 @@
     box-shadow: 0 2px 14px rgba(0, 0, 0, 0.6);
   }
   .leaflet-popup-content-wrapper { border-radius: 8px; }
-  .leaflet-popup-content { margin: 0.8rem 1rem; min-width: 11rem; }
+  .leaflet-popup-content { margin: 0.8rem 1rem; min-width: 11rem; max-height: 50vh; overflow-y: auto; }
   .leaflet-popup-content a {
     display: inline-block;
     margin-top: 0.55rem;
@@ -204,6 +237,11 @@
     <a id="add" href="#" hidden>Add a place →</a></p>
   <p id="notice" hidden></p>
   <div id="filters"></div>
+  <div id="sort">
+    <span>Sort</span>
+    <button type="button" data-sort="top" aria-pressed="true">Most recommended</button>
+    <button type="button" data-sort="new" aria-pressed="false">Newest</button>
+  </div>
 </header>
 
 <ul id="list"></ul>
@@ -219,8 +257,8 @@
      SHEET_CSV: 구글 시트의 「승인된 행만 모은 탭」을 웹에 게시한 CSV 주소.
                 비어 있으면 아래 SAMPLE을 보여 준다.
      FORM_URL:  추천을 받는 구글 폼 주소. 비어 있으면 「Add a place」 링크를 숨긴다. */
-  const SHEET_CSV = '';
-  const FORM_URL  = '';
+  const SHEET_CSV = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vQ-RdGzRaU20YLCodmbfVjJmuylMEthRDkj8PhK-CUDyGqiXD8zECf0a8V8XwgGMrz2gszvuCMsGolE/pub?gid=0&single=true&output=csv';
+  const FORM_URL  = 'https://docs.google.com/forms/d/e/1FAIpQLSfHbz3eKQGyv8BG9yXd4Z0_x_Sj-QIYORQ1M9wCV7MXuNIczA/viewform';
 
   const CENTER = [34.2350, -119.2300];   // 옥스나드와 벤투라 사이
 
@@ -232,6 +270,8 @@
     'Sample Harbor Fish,Seafood,"Fish and chips by the water, go before sunset.",mole_day,,"34.1722, -119.2236"',
     'Sample Boba Stop,Cafe / Dessert,Good place to study.,,,"34.1790, -119.1650"',
     'Sample Main St Ramen,Japanese,Downtown Ventura. Short walk from the pier.,,,"34.2806, -119.2935"',
+    'sample taqueria,Mexican,Get the horchata too.,,,',
+    'Sample Taqueria!,Mexican,,study_group,,',
     'Sample Burger Shack,American,No coordinates yet so this one is list-only.,anon,,',
   ].join('\n');
 
@@ -278,6 +318,29 @@
     }).filter(p => p.name);
   }
 
+  // 같은 가게를 여러 명이 추천하면 한 곳으로 묶는다.
+  // 이름이 같거나(대소문자·기호 무시) 좌표가 똑같으면 같은 가게로 본다.
+  function group(rows) {
+    const byKey = new Map(), out = [];
+    const nameKey = s => 'n:' + s.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '').replace(/^the/, '');
+    rows.forEach((r, i) => {
+      const keys = [nameKey(r.name)];
+      if (r.latlng) keys.push('c:' + r.latlng.join(','));
+      let g = keys.map(k => byKey.get(k)).find(Boolean);
+      if (!g) {
+        g = { name: r.name, category: r.category, url: '', latlng: null, recs: [] };
+        out.push(g);
+      }
+      for (const k of keys) byKey.set(k, g);
+      g.url = g.url || r.url;
+      g.latlng = g.latlng || r.latlng;
+      g.category = g.category || r.category;
+      g.recs.push({ comment: r.comment, nickname: r.nickname });
+      g.last = i;   // 시트는 오래된 순이므로 마지막 추천의 줄 번호가 최신 정도다
+    });
+    return out;
+  }
+
   /* ---------- 좌표 ---------- */
 
   // "34.1975, -119.1771" — 구글 지도에서 우클릭해 복사한 형식 그대로
@@ -322,7 +385,7 @@
     return n;
   };
 
-  let map = null, places = [], filter = '';
+  let map = null, places = [], filter = '', sort = 'top';
 
   function initMap() {
     if (!window.L) {
@@ -341,8 +404,14 @@
     const box = el('div');
     box.append(el('div', 'place', p.name));
     if (p.category) box.append(el('div', 'cat', p.category));
-    if (p.comment)  box.append(el('div', 'why', p.comment));
-    if (p.nickname) box.append(el('div', 'who', '— ' + p.nickname));
+    if (p.recs.length > 1) box.append(el('div', 'count', 'Recommended ' + p.recs.length + ' times'));
+    for (const r of p.recs) {
+      if (!r.comment && !r.nickname) continue;
+      const rec = el('div', 'rec');
+      if (r.comment)  rec.append(el('div', 'why', r.comment));
+      if (r.nickname) rec.append(el('div', 'who', '— ' + r.nickname));
+      box.append(rec);
+    }
     return box;
   }
 
@@ -376,8 +445,14 @@
         a.target = '_blank';
         a.rel = 'noopener';
         pop.append(a);
-        p.marker = L.circleMarker(p.latlng, {
-          radius: 9, weight: 2, color: '#000', fillColor: '#f0a92b', fillOpacity: 1,
+        const n = p.recs.length, size = n > 1 ? 28 : 20;
+        p.marker = L.marker(p.latlng, {
+          icon: L.divIcon({
+            className: '', html: '<div class="pin" style="width:' + size + 'px;height:' + size + 'px">' +
+              (n > 1 ? n : '') + '</div>',
+            iconSize: [size, size], popupAnchor: [0, -size / 2],
+          }),
+          title: p.name,
         }).bindPopup(pop);
         p.marker.on('click', () => {
           for (const q of places) q.item.classList.toggle('active', q === p);
@@ -395,6 +470,7 @@
 
     buildFilters();
     applyFilter();
+    applySort();
 
     const pins = places.filter(p => p.marker).map(p => p.latlng);
     if (map && pins.length) map.fitBounds(pins, { padding: [40, 40], maxZoom: 15 });
@@ -416,6 +492,22 @@
       });
       box.append(b);
     }
+  }
+
+  // top: 추천 많은 순(같으면 최근 순), new: 최근에 추천받은 순
+  function applySort() {
+    places.sort((a, b) =>
+      (sort === 'top' ? b.recs.length - a.recs.length : 0) || b.last - a.last);
+    if (places.length) $('list').append(...places.map(p => p.item));
+  }
+
+  for (const b of document.querySelectorAll('#sort button')) {
+    b.addEventListener('click', () => {
+      sort = b.dataset.sort;
+      for (const x of document.querySelectorAll('#sort button'))
+        x.setAttribute('aria-pressed', String(x === b));
+      applySort();
+    });
   }
 
   function applyFilter() {
@@ -451,7 +543,7 @@
 
   initMap();
   load()
-    .then(text => { places = toPlaces(text); build(); })
+    .then(text => { places = group(toPlaces(text)); build(); })
     .catch(() => { notice('Could not load the list right now. Try again in a minute.'); build(); });
 })();
 </script>
